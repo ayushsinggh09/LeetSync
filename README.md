@@ -27,5 +27,6 @@ Manually tracking solved LeetCode problems in a spreadsheet or curated sheet (li
 # Notion DashBoard
 <img width="1920" height="959" alt="image" src="https://github.com/user-attachments/assets/1239470a-0cd9-4970-8d32-1c06dc96a8ac" />
 # Terminal push all free problem to notion
-<img width="1920" height="1080" alt="Screenshot 2026-09-10 180206" src="https://github.com/user-attachments/assets/daf0483d-8643-4f42-b904-405267ecbd1c" />
+<img width="1426" height="455" alt="Screenshot 2026-09-10 191226" src="https://github.com/user-attachments/assets/5104543e-5b70-4623-a835-0d7de2b564be" />
+
 
