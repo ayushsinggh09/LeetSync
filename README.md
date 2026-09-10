@@ -23,3 +23,9 @@ Manually tracking solved LeetCode problems in a spreadsheet or curated sheet (li
 3. Auth	Environment-based secrets (python-dotenv)
 4. Automation	GitHub Actions (scheduled cron workflow)
 5. Data store	Notion database (as the "frontend"/dashboard)
+
+# Notion DashBoard
+<img width="1920" height="959" alt="image" src="https://github.com/user-attachments/assets/1239470a-0cd9-4970-8d32-1c06dc96a8ac" />
+# Terminal push all free problem to notion
+<img width="1920" height="1080" alt="Screenshot 2026-09-10 180206" src="https://github.com/user-attachments/assets/daf0483d-8643-4f42-b904-405267ecbd1c" />
+
