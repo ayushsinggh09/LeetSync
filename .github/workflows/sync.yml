@@ -2,9 +2,9 @@ name: LeetCode Notion Sync
 
 on:
   schedule:
-    # Runs every day at 03:00 UTC
+    # Runs every day at 03:00 UTC.
     - cron: "0 3 * * *"
-  workflow_dispatch: {}  # allows manually triggering the workflow
+  workflow_dispatch: {}  # allows manually triggering the workflow 
 
 jobs:
   sync:
@@ -29,4 +29,8 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           LEETCODE_SESSION: ${{ secrets.LEETCODE_SESSION }}
           LEETCODE_CSRF_TOKEN: ${{ secrets.LEETCODE_CSRF_TOKEN }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM: ${{ secrets.TWILIO_WHATSAPP_FROM }}
+          TWILIO_WHATSAPP_TO: ${{ secrets.TWILIO_WHATSAPP_TO }}
         run: python sync.py

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import requests
 from dotenv import load_dotenv
 from notion_client import Client
+from twilio.rest import Client as TwilioClient
 
 load_dotenv()
 
@@ -14,6 +15,11 @@ LEETCODE_CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
 DATA_SOURCE_ID = "7548daa2-2d83-4e9b-ae5b-7bc9f4110b04"
 STATS_DATA_SOURCE_ID = "2bfaae3d-ca1d-4511-af67-974b4198d6ab"
 LEETCODE_USERNAME = "ayushsinggh09"  
+
+TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
+TWILIO_AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
+TWILIO_WHATSAPP_FROM = os.environ["TWILIO_WHATSAPP_FROM"]
+TWILIO_WHATSAPP_TO = os.environ["TWILIO_WHATSAPP_TO"]
 
 notion = Client(auth=NOTION_TOKEN)
 
@@ -77,7 +83,7 @@ def compute_streaks(active_days):
     sorted_days = sorted(active_days)
     total_active_days = len(sorted_days)
 
-    #scan for longest run of consecutive calendar days
+    # scan for longest run of consecutive calendar days
     longest_streak = 1
     current_run = 1
     for i in range(1, len(sorted_days)):
@@ -92,7 +98,7 @@ def compute_streaks(active_days):
     current_streak = 0
     cursor = today
     if today not in active_days:
-        cursor = today - timedelta(days=1) 
+        cursor = today - timedelta(days=1)
     while cursor in active_days:
         current_streak += 1
         cursor -= timedelta(days=1)
@@ -118,9 +124,14 @@ def upsert_stat(metric_name, value, existing_stats):
         "Value": {"number": value},
     }
     if metric_name in existing_stats:
-        notion.pages.update(page_id=existing_stats[metric_name], properties=properties)
+        notion_request_with_retry(
+            notion.pages.update,
+            page_id=existing_stats[metric_name],
+            properties=properties,
+        )
     else:
-        notion.pages.create(
+        notion_request_with_retry(
+            notion.pages.create,
             parent={"type": "data_source_id", "data_source_id": STATS_DATA_SOURCE_ID},
             properties=properties,
         )
@@ -142,6 +153,8 @@ def sync_streaks():
     upsert_stat("Current Streak", current_streak, existing_stats)
     upsert_stat("Longest Streak", longest_streak, existing_stats)
     upsert_stat("Total Active Days", total_active_days, existing_stats)
+
+    return current_streak, longest_streak, total_active_days
 
 
 QUESTION_LIST_QUERY = """
@@ -199,13 +212,13 @@ def fetch_all_leetcode_problems():
         if skip >= total or not batch:
             break
 
-        time.sleep(0.3) 
+        time.sleep(0.3)  
 
     return all_questions
 
 
 def fetch_existing_notion_pages():
-    """Build a map of {titleSlug: notion_page_id} for problems already in Notion."""
+    """Build a map of {leetcode_id: notion_page_id} for problems already in Notion."""
     existing = {}
     cursor = None
 
@@ -217,11 +230,10 @@ def fetch_existing_notion_pages():
         response = notion.data_sources.query(**query_args)
 
         for page in response["results"]:
-            slug_prop = page["properties"].get("Slug", {})
-            rich_text = slug_prop.get("rich_text", [])
-            if rich_text:
-                slug = rich_text[0]["plain_text"]
-                existing[slug] = page["id"]
+            id_prop = page["properties"].get("LeetCode ID", {})
+            leetcode_id = id_prop.get("number")
+            if leetcode_id is not None:
+                existing[leetcode_id] = page["id"]
 
         if response.get("has_more"):
             cursor = response.get("next_cursor")
@@ -255,11 +267,36 @@ def build_properties(question):
         "Name": {"title": [{"text": {"content": question["title"]}}]},
         "Difficulty": {"select": {"name": difficulty_label(question["difficulty"])}},
         "LeetCode ID": {"number": int(question["frontendQuestionId"])},
-        "Slug": {"rich_text": [{"text": {"content": slug}}]},
         "Status": {"select": {"name": status_to_label(question["status"])}},
         "URL": {"url": url},
         "Tags": {"multi_select": tags},
     }
+
+
+def send_whatsapp_notification(message):
+    try:
+        twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_FROM,
+            to=TWILIO_WHATSAPP_TO,
+            body=message,
+        )
+        print("WhatsApp notification sent.")
+    except Exception as e:
+        print(f"WhatsApp notification failed (sync itself still succeeded): {e}")
+
+
+def notion_request_with_retry(func, max_retries=5, **kwargs):
+    """Call a notion-client function, retrying on transient network/timeout errors."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return func(**kwargs)
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            wait = min(5 * attempt, 30)
+            print(f"  Notion request failed ({e}), retrying in {wait}s... (attempt {attempt}/{max_retries})")
+            time.sleep(wait)
 
 
 def main():
@@ -279,14 +316,19 @@ def main():
             skipped_paid += 1
             continue
 
-        slug = question["titleSlug"]
+        leetcode_id = int(question["frontendQuestionId"])
         properties = build_properties(question)
 
-        if slug in existing_pages:
-            notion.pages.update(page_id=existing_pages[slug], properties=properties)
+        if leetcode_id in existing_pages:
+            notion_request_with_retry(
+                notion.pages.update,
+                page_id=existing_pages[leetcode_id],
+                properties=properties,
+            )
             updated += 1
         else:
-            notion.pages.create(
+            notion_request_with_retry(
+                notion.pages.create,
                 parent={"type": "data_source_id", "data_source_id": DATA_SOURCE_ID},
                 properties=properties,
             )
@@ -303,8 +345,18 @@ def main():
     print(f"Skipped (paid-only problems): {skipped_paid}")
 
     print("\nStep 4: Syncing streak stats...")
-    sync_streaks()
+    current_streak, longest_streak, total_active_days = sync_streaks()
     print("Streak stats updated.")
+
+    print("\nStep 5: Sending WhatsApp notification...")
+    summary_message = (
+        "LeetSync update:\n"
+        f"Created: {created} | Updated: {updated}\n"
+        f"Current streak: {current_streak} days\n"
+        f"Longest streak: {longest_streak} days\n"
+        f"Total active days: {total_active_days}"
+    )
+    send_whatsapp_notification(summary_message)
 
 
 if __name__ == "__main__":
