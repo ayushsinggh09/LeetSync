@@ -14,7 +14,7 @@ Think of it as your own self-updating "Striver Sheet" style tracker, except it's
 9. Automatically retries on transient network/API timeouts, so a brief connection hiccup doesn't kill the whole run
 
 # Block Diagram    
-<img width="2720" height="2400" alt="leetsync_architecture_diagram" src="https://github.com/user-attachments/assets/29d440af-9312-4e80-b768-32880e2b7915" />
+<img width="2720" height="2176" alt="leetsync_architecture_diagram" src="https://github.com/user-attachments/assets/8cf8481c-fe60-4c58-a4ce-3a14c0ea4e1d" />
 
 # Why I built this
 
