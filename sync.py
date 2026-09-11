@@ -98,7 +98,7 @@ def compute_streaks(active_days):
     current_streak = 0
     cursor = today
     if today not in active_days:
-        cursor = today - timedelta(days=1)
+        cursor = today - timedelta(days=1)  
     while cursor in active_days:
         current_streak += 1
         cursor -= timedelta(days=1)
@@ -218,7 +218,7 @@ def fetch_all_leetcode_problems():
 
 
 def fetch_existing_notion_pages():
-    """Build a map of {leetcode_id: notion_page_id} for problems already in Notion."""
+    """Build a map of {leetcode_id: {"page_id": ..., "status": ...}} for problems already in Notion."""
     existing = {}
     cursor = None
 
@@ -232,8 +232,10 @@ def fetch_existing_notion_pages():
         for page in response["results"]:
             id_prop = page["properties"].get("LeetCode ID", {})
             leetcode_id = id_prop.get("number")
+            status_prop = page["properties"].get("Status", {}).get("select")
+            old_status = status_prop["name"] if status_prop else None
             if leetcode_id is not None:
-                existing[leetcode_id] = page["id"]
+                existing[leetcode_id] = {"page_id": page["id"], "status": old_status}
 
         if response.get("has_more"):
             cursor = response.get("next_cursor")
@@ -254,7 +256,7 @@ def status_to_label(lc_status):
 
 
 def difficulty_label(diff):
-    # LeetCode returns difficulty level as an integer 1=Easy 2=Medium 3=Hard
+    # LeetCode returns difficulty as an integer 1=Easy 2=Medium 3=Hard
     return {1: "Easy", 2: "Medium", 3: "Hard"}.get(diff, str(diff))
 
 
@@ -286,7 +288,105 @@ def send_whatsapp_notification(message):
         print(f"WhatsApp notification failed (sync itself still succeeded): {e}")
 
 
-def notion_request_with_retry(func, max_retries=5, **kwargs):
+RECENT_AC_QUERY = """
+query recentAcSubmissions($username: String!, $limit: Int!) {
+  recentAcSubmissionList(username: $username, limit: $limit) {
+    title
+    titleSlug
+    timestamp
+  }
+}
+"""
+
+QUESTION_ID_QUERY = """
+query questionData($titleSlug: String!) {
+  question(titleSlug: $titleSlug) {
+    questionFrontendId
+  }
+}
+"""
+
+
+def fetch_recent_ac_submissions(limit=20):
+    payload = {
+        "query": RECENT_AC_QUERY,
+        "variables": {"username": LEETCODE_USERNAME, "limit": limit},
+    }
+    resp = requests.post(LEETCODE_GRAPHQL_URL, json=payload, headers=LEETCODE_HEADERS)
+    resp.raise_for_status()
+    return resp.json()["data"]["recentAcSubmissionList"]
+
+
+def fetch_question_id(title_slug):
+    payload = {"query": QUESTION_ID_QUERY, "variables": {"titleSlug": title_slug}}
+    resp = requests.post(LEETCODE_GRAPHQL_URL, json=payload, headers=LEETCODE_HEADERS)
+    resp.raise_for_status()
+    return int(resp.json()["data"]["question"]["questionFrontendId"])
+
+
+def get_stat_value(metric_name, default=0):
+    response = notion.data_sources.query(
+        data_source_id=STATS_DATA_SOURCE_ID,
+        filter={"property": "Metric", "title": {"equals": metric_name}},
+    )
+    results = response.get("results", [])
+    if results:
+        return results[0]["properties"].get("Value", {}).get("number", default)
+    return default
+
+
+def find_page_by_leetcode_id(leetcode_id):
+    response = notion.data_sources.query(
+        data_source_id=DATA_SOURCE_ID,
+        filter={"property": "LeetCode ID", "number": {"equals": leetcode_id}},
+    )
+    results = response.get("results", [])
+    return results[0]["id"] if results else None
+
+
+def quick_check():
+    """Fast check: looks only at your most recent accepted submissions, updates those
+    specific rows in Notion, and notifies immediately. Meant to run every few minutes."""
+    print("Running quick real-time check...")
+    submissions = fetch_recent_ac_submissions(limit=20)
+    last_notified = get_stat_value("Last Notified Timestamp", default=0)
+
+    new_subs = [s for s in submissions if int(s["timestamp"]) > last_notified]
+    if not new_subs:
+        print("No new submissions since last check.")
+        return
+
+    new_subs.sort(key=lambda s: int(s["timestamp"]))  # oldest first
+
+    notified_titles = []
+    max_timestamp = last_notified
+
+    for sub in new_subs:
+        title = sub["title"]
+        timestamp = int(sub["timestamp"])
+        max_timestamp = max(max_timestamp, timestamp)
+
+        try:
+            leetcode_id = fetch_question_id(sub["titleSlug"])
+            page_id = find_page_by_leetcode_id(leetcode_id)
+            if page_id:
+                notion_request_with_retry(
+                    notion.pages.update,
+                    page_id=page_id,
+                    properties={"Status": {"select": {"name": "Solved"}}},
+                )
+        except Exception as e:
+            print(f"  Could not update Notion for {title}: {e}")
+
+        notified_titles.append(title)
+        time.sleep(0.4)
+
+    existing_stats = fetch_existing_stats()
+    upsert_stat("Last Notified Timestamp", max_timestamp, existing_stats)
+
+    message = "Just solved on LeetCode:\n" + "\n".join(f"- {t}" for t in notified_titles)
+    send_whatsapp_notification(message)
+    print(f"Notified about {len(notified_titles)} new solve(s).")
     """Call a notion-client function, retrying on transient network/timeout errors."""
     for attempt in range(1, max_retries + 1):
         try:
@@ -309,7 +409,8 @@ def main():
     print(f"Existing pages already in Notion: {len(existing_pages)}\n")
 
     print("Step 3: Syncing to Notion...")
-    created, updated, skipped_paid = 0, 0, 0
+    created, updated, skipped_paid, total_solved = 0, 0, 0, 0
+    newly_solved = []
 
     for i, question in enumerate(problems, start=1):
         if question["paidOnly"]:
@@ -318,11 +419,21 @@ def main():
 
         leetcode_id = int(question["frontendQuestionId"])
         properties = build_properties(question)
+        new_status = status_to_label(question["status"])
 
-        if leetcode_id in existing_pages:
+        if new_status == "Solved":
+            total_solved += 1
+
+        existing_entry = existing_pages.get(leetcode_id)
+
+        if existing_entry:
+            old_status = existing_entry["status"]
+            if old_status != "Solved" and new_status == "Solved":
+                newly_solved.append(question["title"])
+
             notion_request_with_retry(
                 notion.pages.update,
-                page_id=existing_pages[leetcode_id],
+                page_id=existing_entry["page_id"],
                 properties=properties,
             )
             updated += 1
@@ -343,21 +454,62 @@ def main():
     print(f"Created: {created}")
     print(f"Updated: {updated}")
     print(f"Skipped (paid-only problems): {skipped_paid}")
+    print(f"Total solved: {total_solved}")
+    if newly_solved:
+        print(f"Newly solved this run: {', '.join(newly_solved)}")
 
     print("\nStep 4: Syncing streak stats...")
     current_streak, longest_streak, total_active_days = sync_streaks()
+    existing_stats = fetch_existing_stats()
+    upsert_stat("Total Solved", total_solved, existing_stats)
     print("Streak stats updated.")
 
     print("\nStep 5: Sending WhatsApp notification...")
+
+    if newly_solved:
+        solved_lines = "\n".join(f"- {name}" for name in newly_solved[:15])
+        more_note = f"\n(+{len(newly_solved) - 15} more)" if len(newly_solved) > 15 else ""
+        solved_section = f"\n\nJust solved:\n{solved_lines}{more_note}"
+    else:
+        solved_section = ""
+
     summary_message = (
         "LeetSync update:\n"
         f"Created: {created} | Updated: {updated}\n"
+        f"Total solved: {total_solved}\n"
         f"Current streak: {current_streak} days\n"
         f"Longest streak: {longest_streak} days\n"
         f"Total active days: {total_active_days}"
+        f"{solved_section}"
     )
     send_whatsapp_notification(summary_message)
 
 
+def check_and_send_reminder():
+    """Lightweight check (no full sync) — reminds you via WhatsApp if you haven't solved anything today yet."""
+    print("Checking today's LeetCode activity for reminder...")
+    year = datetime.utcnow().year
+    active_days = fetch_active_days_for_year(year)
+    today = datetime.utcnow().date()
+
+    if today in active_days:
+        print("Already solved something today - no reminder needed.")
+        return
+
+    print("No activity today yet - sending reminder.")
+    message = (
+        "Reminder: you haven't solved a LeetCode problem today yet.\n"
+        "Solve at least one to keep your streak going!"
+    )
+    send_whatsapp_notification(message)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if "--remind" in sys.argv:
+        check_and_send_reminder()
+    elif "--quick-check" in sys.argv:
+        quick_check()
+    else:
+        main()
