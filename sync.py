@@ -14,7 +14,7 @@ LEETCODE_SESSION = os.environ["LEETCODE_SESSION"]
 LEETCODE_CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
 DATA_SOURCE_ID = "7548daa2-2d83-4e9b-ae5b-7bc9f4110b04"
 STATS_DATA_SOURCE_ID = "2bfaae3d-ca1d-4511-af67-974b4198d6ab"
-LEETCODE_USERNAME = "ayushsinggh09"  
+LEETCODE_USERNAME = "ayushsinggh09" 
 
 TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
 TWILIO_AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
@@ -37,6 +37,7 @@ query userProfileCalendar($username: String!, $year: Int) {
   matchedUser(username: $username) {
     userCalendar(year: $year) {
       activeYears
+      streak
       submissionCalendar
     }
   }
@@ -53,6 +54,18 @@ def fetch_active_years():
     resp.raise_for_status()
     calendar = resp.json()["data"]["matchedUser"]["userCalendar"]
     return calendar["activeYears"]
+
+
+def fetch_official_current_streak():
+    """LeetCode's own current-streak number (accounts for streak freezes, unlike our own count)."""
+    payload = {
+        "query": CALENDAR_QUERY,
+        "variables": {"username": LEETCODE_USERNAME, "year": datetime.now().year},
+    }
+    resp = requests.post(LEETCODE_GRAPHQL_URL, json=payload, headers=LEETCODE_HEADERS)
+    resp.raise_for_status()
+    calendar = resp.json()["data"]["matchedUser"]["userCalendar"]
+    return calendar.get("streak", 0)
 
 
 def fetch_active_days_for_year(year):
@@ -83,7 +96,7 @@ def compute_streaks(active_days):
     sorted_days = sorted(active_days)
     total_active_days = len(sorted_days)
 
-    
+    # scan for longest run of consecutive calendar days
     longest_streak = 1
     current_run = 1
     for i in range(1, len(sorted_days)):
@@ -146,7 +159,11 @@ def sync_streaks():
         all_active_days |= fetch_active_days_for_year(year)
         time.sleep(0.3)
 
-    current_streak, longest_streak, total_active_days = compute_streaks(all_active_days)
+    _, longest_streak, total_active_days = compute_streaks(all_active_days)
+
+
+    current_streak = fetch_official_current_streak()
+
     print(f"Current streak: {current_streak} | Longest streak: {longest_streak} | Total active days: {total_active_days}")
 
     existing_stats = fetch_existing_stats()
@@ -212,7 +229,7 @@ def fetch_all_leetcode_problems():
         if skip >= total or not batch:
             break
 
-        time.sleep(0.3)  
+        time.sleep(0.3) 
 
     return all_questions
 
@@ -369,20 +386,30 @@ def quick_check():
         try:
             leetcode_id = fetch_question_id(sub["titleSlug"])
             page_id = find_page_by_leetcode_id(leetcode_id)
+
             if page_id:
-                notion_request_with_retry(
-                    notion.pages.update,
-                    page_id=page_id,
-                    properties={"Status": {"select": {"name": "Solved"}}},
-                )
+                page = notion_request_with_retry(notion.pages.retrieve, page_id=page_id)
+                current_status = page["properties"].get("Status", {}).get("select")
+                already_solved = current_status is not None and current_status["name"] == "Solved"
+
+                if not already_solved:
+                    notion_request_with_retry(
+                        notion.pages.update,
+                        page_id=page_id,
+                        properties={"Status": {"select": {"name": "Solved"}}},
+                    )
+                    notified_titles.append(title)
         except Exception as e:
             print(f"  Could not update Notion for {title}: {e}")
 
-        notified_titles.append(title)
         time.sleep(0.4)
 
     existing_stats = fetch_existing_stats()
     upsert_stat("Last Notified Timestamp", max_timestamp, existing_stats)
+
+    if not notified_titles:
+        print("No genuinely new solves to notify (all were resubmissions or already solved).")
+        return
 
     message = "Just solved on LeetCode:\n" + "\n".join(f"- {t}" for t in notified_titles)
     send_whatsapp_notification(message)
