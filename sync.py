@@ -83,7 +83,7 @@ def compute_streaks(active_days):
     sorted_days = sorted(active_days)
     total_active_days = len(sorted_days)
 
-    # scan for longest run of consecutive calendar days
+    
     longest_streak = 1
     current_run = 1
     for i in range(1, len(sorted_days)):
@@ -98,7 +98,7 @@ def compute_streaks(active_days):
     current_streak = 0
     cursor = today
     if today not in active_days:
-        cursor = today - timedelta(days=1)  
+        cursor = today - timedelta(days=1) 
     while cursor in active_days:
         current_streak += 1
         cursor -= timedelta(days=1)
@@ -387,6 +387,9 @@ def quick_check():
     message = "Just solved on LeetCode:\n" + "\n".join(f"- {t}" for t in notified_titles)
     send_whatsapp_notification(message)
     print(f"Notified about {len(notified_titles)} new solve(s).")
+
+
+def notion_request_with_retry(func, max_retries=5, **kwargs):
     """Call a notion-client function, retrying on transient network/timeout errors."""
     for attempt in range(1, max_retries + 1):
         try:
