@@ -25,7 +25,7 @@ Manually tracking solved LeetCode problems in a spreadsheet or curated sheet (li
 
 # Tech Stack
 1. Language Python 3
-2. APIs LeetCode GraphQL API, Notion API (notion-client), Twilio API (WhatsApp)
+2. APIs LeetCode GraphQL API, Notion API (notion-client), Gmail
 3. Auth Environment-based secrets (python-dotenv)
 4. Automation GitHub Actions (scheduled cron workflow)
 5. Notifications Email via Gmail SMTP
