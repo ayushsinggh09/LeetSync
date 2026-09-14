@@ -1,8 +1,5 @@
 # LeetSync
-LeetSync
-
 Automatically sync your entire LeetCode problem list — and your live solved status — into a Notion database.
-
 Think of it as your own self-updating "Striver Sheet" style tracker, except it's built by you, pulls real-time data from your LeetCode account, and runs on autopilot in the cloud.
 
 # What it does
@@ -16,6 +13,8 @@ Think of it as your own self-updating "Striver Sheet" style tracker, except it's
 8. Runs on a schedule via GitHub Actions, so your Notion tracker stays fresh even when your laptop is off
 9. Automatically retries on transient network/API timeouts, so a brief connection hiccup doesn't kill the whole run
 
+# Block Diagram    
+<img width="2720" height="2176" alt="leetsync_architecture_diagram" src="https://github.com/user-attachments/assets/8cf8481c-fe60-4c58-a4ce-3a14c0ea4e1d" />
 
 # Why I built this
 
