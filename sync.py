@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import requests
 from dotenv import load_dotenv
 from notion_client import Client
-from twilio.rest import Client as TwilioClient
+import smtplib
+from email.mime.text import MIMEText
 
 load_dotenv()
 
@@ -14,12 +15,11 @@ LEETCODE_SESSION = os.environ["LEETCODE_SESSION"]
 LEETCODE_CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
 DATA_SOURCE_ID = "7548daa2-2d83-4e9b-ae5b-7bc9f4110b04"
 STATS_DATA_SOURCE_ID = "2bfaae3d-ca1d-4511-af67-974b4198d6ab"
-LEETCODE_USERNAME = "ayushsinggh09" 
+LEETCODE_USERNAME = "ayushsinggh09"  
 
-TWILIO_ACCOUNT_SID = os.environ["TWILIO_ACCOUNT_SID"]
-TWILIO_AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
-TWILIO_WHATSAPP_FROM = os.environ["TWILIO_WHATSAPP_FROM"]
-TWILIO_WHATSAPP_TO = os.environ["TWILIO_WHATSAPP_TO"]
+GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
+GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
+NOTIFY_EMAIL_TO = os.environ["NOTIFY_EMAIL_TO"]
 
 notion = Client(auth=NOTION_TOKEN)
 
@@ -229,7 +229,7 @@ def fetch_all_leetcode_problems():
         if skip >= total or not batch:
             break
 
-        time.sleep(0.3) 
+        time.sleep(0.3)  
 
     return all_questions
 
@@ -292,17 +292,22 @@ def build_properties(question):
     }
 
 
-def send_whatsapp_notification(message):
+def send_whatsapp_notification(message, subject="LeetSync update"):
+    """Sends an email notification via Gmail SMTP. Name kept as-is to avoid
+    touching every call site; it now sends email, not WhatsApp."""
     try:
-        twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        twilio_client.messages.create(
-            from_=TWILIO_WHATSAPP_FROM,
-            to=TWILIO_WHATSAPP_TO,
-            body=message,
-        )
-        print("WhatsApp notification sent.")
+        msg = MIMEText(message)
+        msg["Subject"] = subject
+        msg["From"] = GMAIL_ADDRESS
+        msg["To"] = NOTIFY_EMAIL_TO
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_ADDRESS, [NOTIFY_EMAIL_TO], msg.as_string())
+
+        print("Email notification sent.")
     except Exception as e:
-        print(f"WhatsApp notification failed (sync itself still succeeded): {e}")
+        print(f"Email notification failed (sync itself still succeeded): {e}")
 
 
 RECENT_AC_QUERY = """
@@ -399,6 +404,7 @@ def quick_check():
                         properties={"Status": {"select": {"name": "Solved"}}},
                     )
                     notified_titles.append(title)
+                # else if already solved problem skip notifying
         except Exception as e:
             print(f"  Could not update Notion for {title}: {e}")
 
@@ -412,7 +418,7 @@ def quick_check():
         return
 
     message = "Just solved on LeetCode:\n" + "\n".join(f"- {t}" for t in notified_titles)
-    send_whatsapp_notification(message)
+    send_whatsapp_notification(message, subject="LeetCode: New problem solved")
     print(f"Notified about {len(notified_titles)} new solve(s).")
 
 
@@ -512,7 +518,7 @@ def main():
         f"Total active days: {total_active_days}"
         f"{solved_section}"
     )
-    send_whatsapp_notification(summary_message)
+    send_whatsapp_notification(summary_message, subject="LeetSync: Hourly sync summary")
 
 
 def check_and_send_reminder():
@@ -531,7 +537,7 @@ def check_and_send_reminder():
         "Reminder: you haven't solved a LeetCode problem today yet.\n"
         "Solve at least one to keep your streak going!"
     )
-    send_whatsapp_notification(message)
+    send_whatsapp_notification(message, subject="LeetCode reminder: nothing solved today yet")
 
 
 if __name__ == "__main__":
