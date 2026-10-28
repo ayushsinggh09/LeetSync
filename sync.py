@@ -13,8 +13,8 @@ load_dotenv()
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 LEETCODE_SESSION = os.environ["LEETCODE_SESSION"]
 LEETCODE_CSRF_TOKEN = os.environ["LEETCODE_CSRF_TOKEN"]
-DATA_SOURCE_ID = "****************"
-STATS_DATA_SOURCE_ID = "*****************"
+DATA_SOURCE_ID = "7548daa2-2d83-4e9b-ae5b-7bc9f4110b04"
+STATS_DATA_SOURCE_ID = "2bfaae3d-ca1d-4511-af67-974b4198d6ab"
 LEETCODE_USERNAME = "ayushsinggh09"  
 
 GMAIL_ADDRESS = os.environ["GMAIL_ADDRESS"]
